@@ -33,6 +33,7 @@
 #include "MenuItem.h"
 #include "PropertyEdit.h"
 #include "SimpleMenu.h"
+#include "DebouncedInput.h"
 
 /*****************************************************************************
  * Private types/enumerations/variables
@@ -52,6 +53,7 @@
  ****************************************************************************/
 static volatile int counter;
 static volatile uint32_t systicks;
+static volatile int systicks2;
 static int dPort[4] = {0,0,1,0};
 static int dPin[4] = {10,16,3,0};
 static volatile bool tickFlag = false;
@@ -81,6 +83,7 @@ void RIT_IRQHandler(void)
 void SysTick_Handler(void)
 {
 
+	systicks2++;
 	Flag=true;
 	if(counter > 0) {
 		counter-=1;
@@ -89,6 +92,11 @@ void SysTick_Handler(void)
 #ifdef __cplusplus
 }
 #endif
+
+unsigned int GetSysticks()
+{
+	return systicks2;
+}
 
 
 void Sleep(int ms)
@@ -104,47 +112,45 @@ uint32_t millis() {
 }
 
 
+
 int isPressed(){
 	int btnKeyNum =0;
+	//create digi
+	static DebouncedInput dInput4(4,10);
+	static DebouncedInput dInput5(5,10);
+	static DebouncedInput dInput6(6,10);
+	static DebouncedInput dInput7(7,10);
 
-	if(Chip_GPIO_GetPinState(LPC_GPIO, 0,10)) {
-		//pin d4
-		btnKeyNum = 1;
-		//Board_LED_Toggle(btnKeyNum);
-		while(Chip_GPIO_GetPinState(LPC_GPIO, 0,10));
-	}
-	if(Chip_GPIO_GetPinState(LPC_GPIO, 0,16)) {
-		//pin d5
-		btnKeyNum = 2;
-		//Board_LED_Toggle(btnKeyNum);
-		while(Chip_GPIO_GetPinState(LPC_GPIO, 0,16));
-	}
-	if(Chip_GPIO_GetPinState(LPC_GPIO, 1,3)) {
-		//pin d6
-		btnKeyNum = 3;
-		//Board_LED_Toggle(btnKeyNum);
-		while(Chip_GPIO_GetPinState(LPC_GPIO, 1,3));
-	}
-	if(Chip_GPIO_GetPinState(LPC_GPIO, 0,0)) {
-		//pin d7
-		btnKeyNum = 4;
-		//Board_LED_Toggle(btnKeyNum);
-		while(Chip_GPIO_GetPinState(LPC_GPIO, 0,0));
-	}
+	static bool dArray[4];
 
-	/*
-	//check pin states d4 - d7
-	for(int i =0;i >4; i++){
-		if(Chip_GPIO_GetPinState(LPC_GPIO, dPort[i],dPin[i])) {
+	dArray[0] = dInput4.read();
+	dArray[1] = dInput5.read();
+	dArray[2] = dInput6.read();
+	dArray[3] = dInput7.read();
+
+	for(int i =0;i < 4; i++){
+		if(dArray[i]){
 			btnKeyNum = i+1;
-			Board_LED_Toggle(i);
-			while(Chip_GPIO_GetPinState(LPC_GPIO, dPort[i],dPin[i]));
 		}
 	}
-	 */
+
 	return btnKeyNum;
 }
 
+void printRegister(ModbusMaster& node, uint16_t reg) {
+	uint8_t result;
+	// slave: read 16-bit registers starting at reg to RX buffer
+	result = node.readHoldingRegisters(reg, 1);
+
+	// do something with data if read is successful
+	if (result == node.ku8MBSuccess)
+	{
+		printf("R%d=%04X\n", reg, node.getResponseBuffer(0));
+	}
+	else {
+		printf("R%d=???\n", reg);
+	}
+}
 
 
 /**
@@ -172,17 +178,11 @@ int main(void)
 	/* Enable and setup SysTick Timer at a periodic rate */
 	SysTick_Config(SystemCoreClock / 1000);
 
-	Chip_IOCON_PinMuxSet(LPC_IOCON, 0, 10, (IOCON_MODE_PULLUP | IOCON_DIGMODE_EN | IOCON_INV_EN));
-	Chip_GPIO_SetPinDIRInput(LPC_GPIO, 0, 10);
-	//d5
-	Chip_IOCON_PinMuxSet(LPC_IOCON, 0, 16, (IOCON_MODE_PULLUP | IOCON_DIGMODE_EN | IOCON_INV_EN));
-	Chip_GPIO_SetPinDIRInput(LPC_GPIO, 0, 16);
-	//d6
-	Chip_IOCON_PinMuxSet(LPC_IOCON, 1, 3, (IOCON_MODE_PULLUP | IOCON_DIGMODE_EN | IOCON_INV_EN));
-	Chip_GPIO_SetPinDIRInput(LPC_GPIO, 1, 3);
-	//d7
-	Chip_IOCON_PinMuxSet(LPC_IOCON, 0, 0, (IOCON_MODE_PULLUP | IOCON_DIGMODE_EN | IOCON_INV_EN));
-	Chip_GPIO_SetPinDIRInput(LPC_GPIO, 0, 0);
+	// button registers set up
+	for(int i=0; i<4;i++){
+		Chip_IOCON_PinMuxSet(LPC_IOCON, dPort[i], dPin[i], (IOCON_MODE_PULLUP | IOCON_DIGMODE_EN | IOCON_INV_EN));
+		Chip_GPIO_SetPinDIRInput(LPC_GPIO, dPort[i], dPin[i]);
+	}
 
 	Chip_RIT_Init(LPC_RITIMER);
 	NVIC_EnableIRQ(RITIMER_IRQn);
@@ -214,20 +214,28 @@ int main(void)
 
 	menu.event(MenuItem::show); // display first menu item
 
-	volatile static int key;
+	volatile static int k;
 	while(1){
-		key = isPressed();
-		if(key == 1){
-			menu.event(MenuItem::up);
-		} else if(key == 2){
-			menu.event(MenuItem::down);
-		} else if (key == 3){
-			menu.event(MenuItem::ok);
-		} else if (key == 4){
-			menu.event(MenuItem::back);
+		printRegister(node, 3); // for debugging
+		k = isPressed();
+		if(k > 0) {
+			switch(k){
+			case 1:
+				menu.event(MenuItem::up);
+				break;
+			case 2:
+				menu.event(MenuItem::down);
+				break;
+			case 3:
+				menu.event(MenuItem::back);
+				break;
+			case 4:
+				menu.event(MenuItem::ok);
+				break;
+			}
 		}
 	}
 
-		return 1;
-	}
+	return 1;
+}
 

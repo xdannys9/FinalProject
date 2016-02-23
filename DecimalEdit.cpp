@@ -21,20 +21,7 @@ DecimalEdit::DecimalEdit(LiquidCrystal& lcd_, ModbusMaster& node_, std::string e
 	lowerL = _lowerL;
 }
 
-void printRegister(ModbusMaster& node, uint16_t reg) {
-	uint8_t result;
-	// slave: read 16-bit registers starting at reg to RX buffer
-	result = node.readHoldingRegisters(reg, 1);
 
-	// do something with data if read is successful
-	if (result == node.ku8MBSuccess)
-	{
-		printf("R%d=%04X\n", reg, node.getResponseBuffer(0));
-	}
-	else {
-		printf("R%d=???\n", reg);
-	}
-}
 
 bool setFrequency(ModbusMaster& node, uint16_t freq) {
 	uint8_t result;
